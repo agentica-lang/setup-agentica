@@ -1,0 +1,55 @@
+name: Setup Agentica
+description: Install a pinned Agentica release (download through the release API with retries, sha256 check, cache).
+author: agentica-lang
+
+inputs:
+  version:
+    description: The release to install, as its tag without a leading "v" (for example 0.26.1).
+    required: true
+  sha256:
+    description: The sha256 of the archive for the runner's platform, from SHA256SUMS of the release. The download is checked against it.
+    required: true
+  token:
+    description: Token for the GitHub API, which is tried first for the release asset (then the direct link). It is sent only to api.github.com.
+    default: ${{ github.token }}
+  cache:
+    description: Cache the extracted release with actions/cache ("true" or "false").
+    default: "true"
+
+outputs:
+  path:
+    description: The folder with the agentica binary. It is also added to PATH.
+    value: ${{ steps.install.outputs.path }}
+  version:
+    description: The installed version.
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    # POSIX sh everywhere except Windows, where Git's bash is the shell the runner has. The script is plain sh
+    # either way (a container job may have no bash).
+    - id: prepare
+      shell: ${{ runner.os == 'Windows' && 'bash' || 'sh' }}
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_SHA256: ${{ inputs.sha256 }}
+      run: sh "$GITHUB_ACTION_PATH/install.sh" prepare
+
+    - if: inputs.cache != 'false'
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.prepare.outputs.root }}
+        key: setup-agentica-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}-${{ steps.prepare.outputs.sha256 }}
+
+    - id: install
+      shell: ${{ runner.os == 'Windows' && 'bash' || 'sh' }}
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_SHA256: ${{ steps.prepare.outputs.sha256 }}
+        INPUT_TOKEN: ${{ inputs.token }}
+        ARCHIVE: ${{ steps.prepare.outputs.archive }}
+        TOP: ${{ steps.prepare.outputs.top }}
+        EXE: ${{ steps.prepare.outputs.exe }}
+        ROOT: ${{ steps.prepare.outputs.root }}
+      run: sh "$GITHUB_ACTION_PATH/install.sh" install
