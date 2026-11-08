@@ -6,7 +6,6 @@
 # Subcommands:
 #   prepare   check the inputs, map the runner to an archive name, write the step outputs
 #   install   download (unless the cache restored it), verify and extract, add bin/ to PATH, write the outputs
-#   asset-id NAME   read the JSON of a release on stdin and print the id of the asset NAME (used by the tests)
 #
 # The inputs arrive as environment variables (INPUT_*), never pasted into the script text, so a value cannot
 # become code.
@@ -16,7 +15,7 @@ API=https://api.github.com/repos/agentica-lang/agentica
 DIRECT=https://github.com/agentica-lang/agentica/releases/download
 
 fail() {
-  echo "::error title=setup-agentica::$*"
+  printf '::error title=setup-agentica::%s\n' "$*"
   exit 1
 }
 
@@ -46,15 +45,12 @@ asset_id() {
 }
 
 # The file goes in on stdin: given a path with backslashes (Windows), sha256sum prefixes the digest with `\`.
+# $sha_tool is chosen before the first call, because a `fail` inside `$(...)` would lose its message.
 sha256_of() {
-  if command -v sha256sum >/dev/null 2>&1; then
+  if [ "$sha_tool" = sha256sum ]; then
     sha256sum <"$1" | cut -d ' ' -f 1
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 <"$1" | cut -d ' ' -f 1
-  elif command -v openssl >/dev/null 2>&1; then
-    openssl dgst -sha256 -r <"$1" | cut -d ' ' -f 1
   else
-    fail "no sha256 tool found (sha256sum, shasum or openssl)"
+    shasum -a 256 <"$1" | cut -d ' ' -f 1
   fi
 }
 
@@ -68,7 +64,7 @@ native_path() {
 }
 
 output() {
-  echo "$1=$2" >>"${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"
+  printf '%s=%s\n' "$1" "$2" >>"${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"
 }
 
 prepare() {
@@ -110,33 +106,40 @@ prepare() {
   output root "${RUNNER_TEMP:?RUNNER_TEMP is not set}/setup-agentica/$version"
 }
 
-# One download try: the release asset through the API, then the direct link. Either can answer 5xx for a
-# while (the direct link gave 504 for an hour on 2026-11-08). The token goes only to api.github.com; curl drops
-# it when the API redirects to the storage host.
-fetch_once() {
-  out=$1
-  curl_opts="-fsSL --connect-timeout 20 --max-time 120"
+curl_get() {
+  curl -fsSL --connect-timeout 20 --max-time 120 "$@"
+}
 
-  if [ -n "${INPUT_TOKEN:-}" ]; then
-    auth="Authorization: Bearer $INPUT_TOKEN"
+# curl_get with the token ($1, may be empty) as a bearer header. The token goes only to api.github.com; curl
+# drops it when the API redirects to the storage host.
+api_get() {
+  token=$1
+  shift
+  if [ -n "$token" ]; then
+    curl_get -H "Authorization: Bearer $token" "$@"
   else
-    auth="X-GitHub-Api-Version: 2022-11-28" # a harmless header, so the curl lines are the same without a token
+    curl_get "$@"
   fi
+}
 
-  # shellcheck disable=SC2086 # curl_opts is a list of fixed words
-  if json=$(curl $curl_opts -H "$auth" "$API/releases/tags/$INPUT_VERSION") &&
-    id=$(printf '%s' "$json" | asset_id "$ARCHIVE") && [ -n "$id" ] &&
-    curl $curl_opts -H "$auth" -H "Accept: application/octet-stream" -o "$out" "$API/releases/assets/$id"; then
-    echo "downloaded $ARCHIVE through the release API"
-    return 0
-  fi
+# The release asset through the API: its id from the release JSON, then its bytes into $1. $2 is the token.
+via_api() {
+  json=$(api_get "$2" "$API/releases/tags/$INPUT_VERSION") || return 1
+  id=$(printf '%s' "$json" | asset_id "$ARCHIVE")
+  [ -n "$id" ] || return 1
+  api_get "$2" -H "Accept: application/octet-stream" -o "$1" "$API/releases/assets/$id"
+}
 
-  # shellcheck disable=SC2086
-  if curl $curl_opts -o "$out" "$DIRECT/$INPUT_VERSION/$ARCHIVE"; then
-    echo "downloaded $ARCHIVE through the direct link"
-    return 0
+# One download try. The direct link is last: it can answer 5xx for a while (504 for an hour on 2026-11-08). The
+# API goes first with the token and, if that fails, once more without it, in case the token is the problem.
+fetch_once() {
+  if via_api "$1" "$INPUT_TOKEN" || { [ -n "$INPUT_TOKEN" ] && via_api "$1" ""; }; then
+    printf 'downloaded %s through the release API\n' "$ARCHIVE"
+  elif curl_get -o "$1" "$DIRECT/$INPUT_VERSION/$ARCHIVE"; then
+    printf 'downloaded %s through the direct link\n' "$ARCHIVE"
+  else
+    return 1
   fi
-  return 1
 }
 
 # 5 tries, waiting 10, 20, 40 and 80 s between them.
@@ -147,7 +150,7 @@ fetch() {
     if [ "$try" -ge 5 ]; then
       fail "download of $ARCHIVE failed after $try tries"
     fi
-    echo "download failed (try $try), retrying in ${delay}s"
+    printf 'download failed (try %s), retrying in %ss\n' "$try" "$delay"
     sleep "$delay"
     delay=$((delay * 2))
     try=$((try + 1))
@@ -178,11 +181,16 @@ install() {
   trap cleanup EXIT
 
   if [ -x "$bin/agentica${EXE:-}" ]; then
-    cache_hit=true
-    echo "Agentica $INPUT_VERSION is already in $ROOT"
+    printf 'Agentica %s is already in %s\n' "$INPUT_VERSION" "$ROOT"
   else
-    cache_hit=false
     command -v curl >/dev/null 2>&1 || fail "curl is required (in a container, install curl and ca-certificates first)"
+    if command -v sha256sum >/dev/null 2>&1; then
+      sha_tool=sha256sum
+    elif command -v shasum >/dev/null 2>&1; then
+      sha_tool=shasum
+    else
+      fail "sha256sum or shasum is required"
+    fi
 
     work="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/setup-agentica-download.$$"
     mkdir -p "$work"
@@ -209,15 +217,13 @@ install() {
   fi
 
   native_bin=$(native_path "$bin")
-  echo "$native_bin" >>"${GITHUB_PATH:?GITHUB_PATH is not set}"
+  printf '%s\n' "$native_bin" >>"${GITHUB_PATH:?GITHUB_PATH is not set}"
   output path "$native_bin"
   output version "$INPUT_VERSION"
-  output cache-hit "$cache_hit"
 }
 
 case ${1:-} in
   prepare) prepare ;;
   install) install ;;
-  asset-id) asset_id "${2:?usage: install.sh asset-id NAME}" ;;
-  *) fail "usage: install.sh prepare | install | asset-id NAME" ;;
+  *) fail "usage: install.sh prepare | install" ;;
 esac

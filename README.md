@@ -65,7 +65,6 @@ steps:
 |---|---|
 | `path` | The folder with the `agentica` binary (also added to `PATH`). |
 | `version` | The installed version. |
-| `cache-hit` | `true` when the release was already on disk (restored from the cache) and nothing was downloaded. |
 
 ## Platforms
 
@@ -95,9 +94,9 @@ Copy the digest of the archive that matches your runner. When you bump `version`
 
 1. `GET /repos/agentica-lang/agentica/releases/tags/VERSION` with the token, and the asset id is read from the JSON with `tr` and `awk`. There is no `jq` dependency, because a container image may not have it.
 2. `GET /releases/assets/ID` with `Accept: application/octet-stream`. This route kept working on 2026-11-08, when the direct release link answered 504 for an hour.
-3. If either call fails, the direct link `https://github.com/agentica-lang/agentica/releases/download/VERSION/ARCHIVE`.
+3. If the API fails with a token, it is tried once more without the token. If it still fails, the direct link `https://github.com/agentica-lang/agentica/releases/download/VERSION/ARCHIVE`.
 4. Every call has a connect limit of 20 s and a total limit of 120 s. The whole sequence is tried 5 times.
-5. The archive is checked (`sha256sum`, else `shasum -a 256`, else `openssl`), unpacked next to its final folder and moved in only then, so a failed install leaves nothing for the cache to save.
+5. The archive is checked (`sha256sum`, else `shasum -a 256`), unpacked next to its final folder and moved in only then, so a failed install leaves nothing for the cache to save.
 
 The cache key is `setup-agentica-OS-ARCH-VERSION-SHA256`, and the cache holds the extracted folder. On a hit the download is skipped.
 

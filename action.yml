@@ -23,9 +23,6 @@ outputs:
   version:
     description: The installed version.
     value: ${{ steps.install.outputs.version }}
-  cache-hit:
-    description: '"true" when the release was already on disk (restored from the cache), so nothing was downloaded.'
-    value: ${{ steps.install.outputs.cache-hit }}
 
 runs:
   using: composite
