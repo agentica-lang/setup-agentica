@@ -28,6 +28,7 @@ fail() {
 # asset's own. This works for compact and for pretty-printed JSON. A name inside a string value cannot match:
 # the line must start with the `"name"` key.
 asset_id() {
+  # shellcheck disable=SC2020 # three characters to three newlines, on purpose
   tr ',{}' '\n\n\n' | awk -v name="$1" '
     /"url"[ \t]*:[ \t]*"[^"]*\/releases\/assets\/[0-9]+"/ {
       s = $0
@@ -44,13 +45,14 @@ asset_id() {
     }'
 }
 
+# The file goes in on stdin: given a path with backslashes (Windows), sha256sum prefixes the digest with `\`.
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | cut -d ' ' -f 1
+    sha256sum <"$1" | cut -d ' ' -f 1
   elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | cut -d ' ' -f 1
+    shasum -a 256 <"$1" | cut -d ' ' -f 1
   elif command -v openssl >/dev/null 2>&1; then
-    openssl dgst -sha256 -r "$1" | cut -d ' ' -f 1
+    openssl dgst -sha256 -r <"$1" | cut -d ' ' -f 1
   else
     fail "no sha256 tool found (sha256sum, shasum or openssl)"
   fi
