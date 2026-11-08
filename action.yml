@@ -10,7 +10,7 @@ inputs:
     description: The sha256 of the archive for the runner's platform, from SHA256SUMS of the release. The download is checked against it.
     required: true
   token:
-    description: Token for the GitHub API, which serves the release asset when the direct link is down. It is sent only to api.github.com.
+    description: Token for the GitHub API, which is tried first for the release asset (then the direct link). It is sent only to api.github.com.
     default: ${{ github.token }}
   cache:
     description: Cache the extracted release with actions/cache ("true" or "false").
